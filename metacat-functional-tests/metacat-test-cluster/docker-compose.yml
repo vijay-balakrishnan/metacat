@@ -15,118 +15,145 @@
 #
 #
 
-version: "2"
+version: "2.1"
 
 services:
-    metacat:
-        image: tomcat:8.0-jre8
-        depends_on:
-            - hive-metastore
-            - hive-metastore-db
-            - postgresql
-        ports:
-            - '8080'
-            - '8000'
-            - '12001'
-            - '12003'
-            - '12004'
-        volumes:
-            - ../build/metacat-war-expanded/ROOT:/usr/local/tomcat/webapps/ROOT
-            - ./resources/logging.properties:/usr/local/tomcat/conf/logging.properties
-            - ../build/logs/metacat:/usr/local/tomcat/logs
-            - ../build/logs/metacat:/var/log/metacat
-            - ./etc-metacat:/etc/metacat:ro
-            - ./etc-metacat/data/:/tmp/data
-        environment:
-            VIRTUAL_HOST: metacat.docker
-            JAVA_OPTS: '-ea
-                -Xms256m
-                -Xmx768m
-                -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000
-                -noverify
-                -Dnetflix.environment=test
-                -Dlogging.path=/var/log/metacat
-                -Dnetflix.discovery.registration.enabled=false
-                -Dnetflix.appinfo.validateInstanceId=false
-                -Dnetflix.appinfo.vipAddress=
-                -Dnetflix.appinfo.metadata.route53NamePrefix=
-                -Dnetflix.appinfo.metadata.enableRoute53=false
-                -Dmetacat.plugin.config.location=/etc/metacat/catalog
-                -Dmetacat.mysqlmetadataservice.enabled=true
-                -Dmetacat.type.converter=com.netflix.metacat.connector.pig.converters.PigTypeConverter
-                -Dmetacat.definition.metadata.delete.enableForTable=false
-                -Dmetacat.definition.metadata.delete.enableDeleteForQualifiedNames=hive-metastore/hsmoke_ddb,hive-metastore/hsmoke_ddb1/test_create_table1,embedded-hive-metastore,embedded-fast-hive-metastore/fsmoke_db1,embedded-fast-hive-metastore/fsmoke_ddb1,embedded-fast-hive-metastore/shard,embedded-fast-hive-metastore/fsmoke_db4,s3-mysql-db,mysql-56-db
-                -Dmetacat.hive.metastore.batchSize=10
-                -Dmetacat.hive.iceberg.enabled=true
-                -Dmetacat.usermetadata.config.location=/etc/metacat/usermetadata.properties
-                -Dmetacat.cache.enabled=true
-                -Dmetacat.authorization.enabled=true
-                -Dmetacat.authorization.createAcl.createAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
-                -Dmetacat.authorization.deleteAcl.deleteAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
-                -Dmetacat.service.tables.error.list.partitions.threshold=100'
-        labels:
-          - "com.netflix.metacat.oss.test"
-          - "com.netflix.metacat.oss.test.war"
-    ##REMOVED cassandra and druid container to reduce the memory demand (orig git hash 43890dd)
-    ##TODO: We need to add them back with light images
-    hive-metastore-db:
-        image: mysql:5.6
-        volumes:
-            - ./datastores/mysql/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
-        environment:
-            - MYSQL_ROOT_PASSWORD=root_password
-            - MYSQL_USER=metacat_user
-            - MYSQL_PASSWORD=metacat_user_password
-            - MYSQL_DATABASE=metacat
-        ports:
-            - '3306'
-        labels:
-          - "com.netflix.metacat.oss.test"
-    postgresql:
-        image: postgres:9.6
-        volumes:
-            - ./datastores/postgres/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
-        environment:
-            - POSTGRES_USER=metacat_user
-            - POSTGRES_PASSWORD=metacat_user_password
-            - POSTGRES_DB=metacat
-        labels:
-          - "com.netflix.metacat.oss.test"
-    hive-metastore:
-        image: danielbwatson/metacat-test-hive-metastore:1.0.0
-        depends_on:
-            - hive-metastore-db
-        ports:
-            - '9083'
-            - '8005'
-        environment:
-            - HIVE_METASTORE_HADOOP_OPTS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8005 -Dhive.metastore.client.socket.timeout=60
-        labels:
-          - "com.netflix.metacat.oss.test"
-          - "com.netflix.metacat.oss.test.hive"
-    storage-barrier:
-        image: martin/wait:latest
-        depends_on:
-            - hive-metastore-db
-            - postgresql
-        environment:
-            - TARGETS=postgresql:5432,hive-metastore-db:3306
-        labels:
-          - "com.netflix.metacat.oss.test"
-    service-barrier:
-        image: martin/wait:latest
-        depends_on:
-            - hive-metastore
-        environment:
-            - TARGETS=hive-metastore:9083
-        labels:
-          - "com.netflix.metacat.oss.test"
-    metacat-barrier:
-        image: martin/wait:latest
-        depends_on:
-            - metacat
-        environment:
-            - TARGETS=metacat:8080,metacat:12001,metacat:12003,metacat:12004
-            - TIMEOUT=360
-        labels:
-          - "com.netflix.metacat.oss.test"
+  metacat:
+    image: tomcat:8.0-jre8
+    depends_on:
+      - hive-metastore
+      - hive-metastore-db
+      - postgresql
+    ports:
+      - '8080'
+      - '8000'
+      - '12001'
+      - '12003'
+      - '12004'
+    volumes:
+      - ../build/metacat-war-expanded/ROOT:/usr/local/tomcat/webapps/ROOT
+      - ./resources/logging.properties:/usr/local/tomcat/conf/logging.properties
+      - ../build/logs/metacat:/usr/local/tomcat/logs
+      - ../build/logs/metacat:/var/log/metacat
+      - ./etc-metacat:/etc/metacat:ro
+      - ./etc-metacat/data/:/tmp/data
+    environment:
+      - TARGETS=elasticsearch:9300
+        VIRTUAL_HOST= metacat.docker
+        JAVA_OPTS= '-ea
+        -Xms256m
+        -Xmx768m
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000
+        -noverify
+        -Dnetflix.environment=test
+        -Dlogging.path=/var/log/metacat
+        -Dnetflix.discovery.registration.enabled=false
+        -Dnetflix.appinfo.validateInstanceId=false
+        -Dnetflix.appinfo.vipAddress=
+        -Dnetflix.appinfo.metadata.route53NamePrefix=
+        -Dnetflix.appinfo.metadata.enableRoute53=false
+        -Dmetacat.plugin.config.location=/etc/metacat/catalog
+        -Dmetacat.metrics.default-registry.enabled=true
+        -Dmetacat.mysqlmetadataservice.enabled=true
+        -Dmetacat.type.converter=com.netflix.metacat.connector.pig.converters.PigTypeConverter
+        -Dmetacat.definition.metadata.delete.enableForTable=false
+        -Dmetacat.definition.metadata.delete.enableDeleteForQualifiedNames=hive-metastore/hsmoke_ddb,hive-metastore/hsmoke_ddb1/test_create_table1,embedded-hive-metastore,embedded-fast-hive-metastore/fsmoke_db1,embedded-fast-hive-metastore/fsmoke_ddb1,embedded-fast-hive-metastore/shard,embedded-fast-hive-metastore/fsmoke_db4,s3-mysql-db,mysql-56-db
+        -Dmetacat.hive.metastore.batchSize=10
+        -Dmetacat.hive.iceberg.enabled=true
+        -Dmetacat.usermetadata.config.location=/etc/metacat/usermetadata.properties
+        -Dmetacat.cache.enabled=true
+        -Dmetacat.authorization.enabled=true
+        -Dmetacat.authorization.createAcl.createAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
+        -Dmetacat.authorization.deleteAcl.deleteAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
+        -Dmetacat.service.tables.error.list.partitions.threshold=100'
+    labels:
+      - "com.netflix.metacat.oss.test"
+      - "com.netflix.metacat.oss.test.war"
+  ##REMOVED cassandra and druid container to reduce the memory demand (orig git hash 43890dd)
+  ##TODO: We need to add them back with light images
+  hive-metastore-db:
+    image: mysql:5.6
+    volumes:
+      - ./datastores/mysql/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_USER=metacat_user
+      - MYSQL_PASSWORD=metacat_user_password
+      - MYSQL_DATABASE=metacat
+    ports:
+      - '3306'
+    labels:
+      - "com.netflix.metacat.oss.test"
+  postgresql:
+    image: postgres:9.6
+    volumes:
+      - ./datastores/postgres/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+    environment:
+      - POSTGRES_USER=metacat_user
+      - POSTGRES_PASSWORD=metacat_user_password
+      - POSTGRES_DB=metacat
+    labels:
+      - "com.netflix.metacat.oss.test"
+  hive-metastore:
+    image: danielbwatson/metacat-test-hive-metastore:1.0.0
+    depends_on:
+      - hive-metastore-db
+    ports:
+      - '9083'
+      - '8005'
+    environment:
+      - HIVE_METASTORE_HADOOP_OPTS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8005 -Dhive.metastore.client.socket.timeout=60
+    labels:
+      - "com.netflix.metacat.oss.test"
+      - "com.netflix.metacat.oss.test.hive"
+  storage-barrier:
+    image: martin/wait:latest
+    depends_on:
+      - hive-metastore-db
+      - postgresql
+    environment:
+      - TARGETS=postgresql:5432,hive-metastore-db:3306
+    labels:
+      - "com.netflix.metacat.oss.test"
+  service-barrier:
+    image: martin/wait:latest
+    depends_on:
+      - hive-metastore
+    environment:
+      - TARGETS=hive-metastore:9083
+    labels:
+      - "com.netflix.metacat.oss.test"
+  metacat-barrier:
+    image: martin/wait:latest
+    depends_on:
+      - metacat
+    environment:
+      - TARGETS=metacat:8080,metacat:12001,metacat:12003,metacat:12004
+      - TIMEOUT=360
+    labels:
+      - "com.netflix.metacat.oss.test"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.3.2
+    container_name: elasticsearch
+    environment:
+      - cluster.name=elasticsearch
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - node.name=node1
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    healthcheck:
+      test: "exit 0"
+  kibana:
+    image: docker.elastic.co/kibana/kibana:6.3.2
+    ports:
+      - "5601:5601"
+    container_name: kibana
+    environment:
+      SERVER_NAME: kibana.local
+      ELASTICSEARCH_URL: http://elasticsearch:9200
