@@ -15,7 +15,7 @@
 #
 #
 
-version: "2.1"
+version: "2.4"
 
 services:
   metacat:
@@ -24,12 +24,14 @@ services:
       - hive-metastore
       - hive-metastore-db
       - postgresql
+      - elasticsearch
     ports:
       - '8080'
       - '8000'
       - '12001'
       - '12003'
       - '12004'
+    mem_limit: 5g
     volumes:
       - ../build/metacat-war-expanded/ROOT:/usr/local/tomcat/webapps/ROOT
       - ./resources/logging.properties:/usr/local/tomcat/conf/logging.properties
@@ -42,7 +44,7 @@ services:
         VIRTUAL_HOST= metacat.docker
         JAVA_OPTS= '-ea
         -Xms256m
-        -Xmx768m
+        -Xmx4096m
         -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000
         -noverify
         -Dnetflix.environment=test
