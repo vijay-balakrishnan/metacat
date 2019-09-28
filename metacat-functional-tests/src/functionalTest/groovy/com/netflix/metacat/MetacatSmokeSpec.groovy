@@ -41,6 +41,8 @@ import spock.lang.Shared
 import spock.lang.Specification
 import spock.lang.Unroll
 
+import java.util.stream.IntStream
+
 /**
  * MetacatSmokeSpec.
  * @author amajumdar
@@ -85,6 +87,10 @@ class MetacatSmokeSpec extends Specification {
     }
 
     static createTable(String catalogName, String databaseName, String tableName, String externalValue) {
+        createTable(catalogName, databaseName, tableName, ['EXTERNAL':externalValue])
+    }
+
+    static createTable(String catalogName, String databaseName, String tableName, Map<String, String> metadata) {
         def catalog = api.getCatalog(catalogName)
         if (!catalog.databases.contains(databaseName)) {
             api.createDatabase(catalogName, databaseName, new DatabaseCreateRequestDto())
@@ -106,8 +112,8 @@ class MetacatSmokeSpec extends Specification {
             } else {
                 newTable = PigDataDtoProvider.getTable(catalogName, databaseName, tableName, owner, uri)
             }
-            if (externalValue != null) {
-                newTable.getMetadata() == null? newTable.setMetadata(['EXTERNAL': externalValue]): newTable.getMetadata().put('EXTERNAL', externalValue)
+            if (metadata != null) {
+                newTable.getMetadata() == null? newTable.setMetadata(metadata): newTable.getMetadata().putAll(metadata)
             }
             api.createTable(catalogName, databaseName, tableName, newTable)
         }
@@ -343,6 +349,57 @@ class MetacatSmokeSpec extends Specification {
         'embedded-fast-hive-metastore'  | 'fsmoke_acl' | 'test_create_table'
     }
 
+    def "Test get table names"() {
+        given:
+        def catalogName = 'embedded-fast-hive-metastore'
+        def databaseName = 'fsmoke_db_names'
+        def database1Name = 'fsmoke_db1_names'
+        def database2Name = 'fsmoke_db2_names'
+        def tableName = 'fsmoke_table_names'
+        def ownerFilter = 'hive_filter_field_owner__= "amajumdar"'
+        def paramFilter = 'hive_filter_field_params__type = "ice"'
+        def ownerParamFilter = 'hive_filter_field_params__type = "ice" and hive_filter_field_owner__= "amajumdar"'
+        IntStream.range(0,15).forEach{ i -> createTable(catalogName, databaseName, tableName + i)}
+        IntStream.range(0,25).forEach{ i -> createTable(catalogName, database1Name, tableName + i)}
+        IntStream.range(0,10).forEach{ i -> createTable(catalogName, database2Name, tableName + i, ['type':'ice'])}
+        when:
+        api.getTableNames(catalogName, null, 10)
+        then:
+        thrown(MetacatBadRequestException)
+        when:
+        def result = api.getTableNames(catalogName, ownerFilter, 10)
+        then:
+        result.size() == 10
+        when:
+        result = api.getTableNames(catalogName, ownerFilter, 100)
+        then:
+        result.size() >= 50
+        when:
+        result = api.getTableNames(catalogName, databaseName, ownerFilter, 10)
+        then:
+        result.size() == 10
+        when:
+        result = api.getTableNames(catalogName, databaseName, ownerFilter, 100)
+        then:
+        result.size() == 15
+        when:
+        result = api.getTableNames(catalogName, database2Name, paramFilter, 100)
+        then:
+        result.size() == 10
+        when:
+        result = api.getTableNames(catalogName, database2Name, ownerParamFilter, 100)
+        then:
+        result.size() == 10
+        when:
+        result = api.getTableNames(catalogName, ownerParamFilter, 100)
+        then:
+        result.size() == 10
+        cleanup:
+        IntStream.range(0,15).forEach{ i -> api.deleteTable(catalogName, databaseName, tableName + i)}
+        IntStream.range(0,25).forEach{ i -> api.deleteTable(catalogName, database1Name, tableName + i)}
+        IntStream.range(0,10).forEach{ i -> api.deleteTable(catalogName, database2Name, tableName + i)}
+    }
+
     @Unroll
     def "Test create/update iceberg table"() {
         given:
@@ -357,6 +414,7 @@ class MetacatSmokeSpec extends Specification {
         def metadataFile = new File(curWorkingDir + metadataFileName)
         def uri = isLocalEnv ? String.format('file:/tmp/%s/%s', databaseName, tableName) : null
         def tableDto = PigDataDtoProvider.getTable(catalogName, databaseName, tableName, 'test', uri)
+        tableDto.setFields([])
         def metadataLocation = '/tmp/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json'
         def icebergMetadataLocation = '/tmp/data/icebergManifest.json'
         def metadata = [table_type: 'ICEBERG', metadata_location: metadataLocation]
@@ -426,8 +484,16 @@ class MetacatSmokeSpec extends Specification {
         then:
         thrown(MetacatPreconditionFailedException)
         when:
+        updatedTable = api.getTable(catalogName, databaseName, tableName, true, false, false)
+        updatedTable.getFields().get(0).setComment('new comments')
+        api.updateTable(catalogName, databaseName, tableName, updatedTable)
+        updatedTable = api.getTable(catalogName, databaseName, tableName, true, false, false)
+        then:
+        noExceptionThrown()
+        updatedTable.getFields().get(0).getComment() == 'new comments'
+        when:
         // Failure to get table after a successful update shouldn't fail
-        def updatedInvalidMetadata = [table_type: 'ICEBERG', metadata_location: icebergMetadataLocation, previous_metadata_location: metadataLocation2]
+        def updatedInvalidMetadata = [table_type: 'ICEBERG', metadata_location: icebergMetadataLocation, previous_metadata_location: updatedTable.getMetadata().get('metadata_location')]
         tableDto.getMetadata().putAll(updatedInvalidMetadata)
         api.updateTable(catalogName, databaseName, tableName, tableDto)
         then:
