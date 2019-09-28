@@ -33,6 +33,8 @@ import com.netflix.metacat.main.manager.CatalogManager;
 import com.netflix.metacat.main.manager.ConnectorManager;
 import com.netflix.metacat.main.manager.PluginManager;
 import com.netflix.metacat.main.services.CatalogService;
+import com.netflix.metacat.main.services.CatalogTraversal;
+import com.netflix.metacat.main.services.CatalogTraversalServiceHelper;
 import com.netflix.metacat.main.services.DatabaseService;
 import com.netflix.metacat.main.services.MViewService;
 import com.netflix.metacat.main.services.MetacatInitializationService;
@@ -354,6 +356,48 @@ public class ServicesConfig {
             connectorManager,
             threadServiceManager,
             metacatThriftService
+        );
+    }
+
+    /**
+     * The catalog traversal service helper.
+     *
+     * @param catalogService      Catalog service
+     * @param databaseService     Database service
+     * @param tableService        Table service
+     * @return The catalog traversal service helper bean
+     */
+    @Bean
+    public CatalogTraversalServiceHelper catalogTraversalServiceHelper(
+        final CatalogService catalogService,
+        final DatabaseService databaseService,
+        final TableService tableService
+    ) {
+        return new CatalogTraversalServiceHelper(
+            catalogService,
+            databaseService,
+            tableService
+        );
+    }
+
+    /**
+     * The catalog traversal bean.
+     *
+     * @param config                        System config
+     * @param catalogTraversalServiceHelper traversal service helper
+     * @param registry                      registry of spectator
+     * @return The catalog traversal bean
+     */
+    @Bean
+    public CatalogTraversal catalogTraversal(
+        final Config config,
+        final CatalogTraversalServiceHelper catalogTraversalServiceHelper,
+        final Registry registry
+    ) {
+        return new CatalogTraversal(
+            config,
+            catalogTraversalServiceHelper,
+            registry
         );
     }
 }

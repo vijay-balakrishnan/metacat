@@ -20,6 +20,7 @@ package com.netflix.metacat.connector.hive.iceberg;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Strings;
+import com.google.common.collect.Maps;
 import com.netflix.iceberg.BaseMetastoreTableOperations;
 import com.netflix.iceberg.BaseMetastoreTables;
 import com.netflix.iceberg.PartitionSpec;
@@ -27,14 +28,18 @@ import com.netflix.iceberg.ScanSummary;
 import com.netflix.iceberg.Schema;
 import com.netflix.iceberg.Table;
 import com.netflix.iceberg.TableMetadata;
+import com.netflix.iceberg.TableMetadataParser;
+import com.netflix.iceberg.exceptions.NoSuchTableException;
 import com.netflix.iceberg.expressions.Expression;
 import com.netflix.metacat.common.QualifiedName;
 import com.netflix.metacat.common.exception.MetacatBadRequestException;
 import com.netflix.metacat.common.exception.MetacatNotSupportedException;
 import com.netflix.metacat.common.server.connectors.ConnectorContext;
+import com.netflix.metacat.common.server.connectors.exception.InvalidMetaException;
 import com.netflix.metacat.common.server.connectors.model.PartitionListRequest;
 import com.netflix.metacat.common.server.partition.parser.ParseException;
 import com.netflix.metacat.common.server.partition.parser.PartitionParser;
+import com.netflix.metacat.connector.hive.sql.DirectSqlTable;
 import com.netflix.metacat.connector.hive.util.IcebergFilterGenerator;
 import com.netflix.servo.util.VisibleForTesting;
 import com.netflix.spectator.api.Registry;
@@ -67,16 +72,20 @@ public class IcebergTableHandler {
     /**
      * Constructor.
      *
-     * @param connectorContext connector context
+     * @param connectorContext     connector context
+     * @param icebergTableCriteria iceberg table criteria
+     * @param icebergTableOpWrapper iceberg table operation
      */
-    public IcebergTableHandler(final ConnectorContext connectorContext) {
+    public IcebergTableHandler(final ConnectorContext connectorContext,
+                               final IcebergTableCriteria icebergTableCriteria,
+                               final IcebergTableOpWrapper icebergTableOpWrapper) {
         this.conf = new Configuration();
         this.connectorContext = connectorContext;
         this.registry = connectorContext.getRegistry();
         connectorContext.getConfiguration().keySet()
             .forEach(key -> conf.set(key, connectorContext.getConfiguration().get(key)));
-        this.icebergTableCriteria = new IcebergTableCriteriaImpl(connectorContext);
-        this.icebergTableOpWrapper = new IcebergTableOpWrapper(connectorContext);
+        this.icebergTableCriteria = icebergTableCriteria;
+        this.icebergTableOpWrapper = icebergTableOpWrapper;
     }
 
     /**
@@ -133,14 +142,25 @@ public class IcebergTableHandler {
      *
      * @param tableName             table name
      * @param tableMetadataLocation table metadata location
+     * @param includeInfoDetails    if true, will include more details like the manifest file content
      * @return iceberg table
      */
-    public Table getIcebergTable(final QualifiedName tableName, final String tableMetadataLocation) {
+    public IcebergTableWrapper getIcebergTable(final QualifiedName tableName, final String tableMetadataLocation,
+                                        final boolean includeInfoDetails) {
         final long start = this.registry.clock().wallTime();
         try {
             this.icebergTableCriteria.checkCriteria(tableName, tableMetadataLocation);
             log.debug("Loading icebergTable {} from {}", tableName, tableMetadataLocation);
-            return new IcebergMetastoreTables(tableMetadataLocation).load(tableName.toString());
+            final IcebergMetastoreTables icebergMetastoreTables = new IcebergMetastoreTables(tableMetadataLocation);
+            final Table table = icebergMetastoreTables.load(tableName.toString());
+            final Map<String, String> extraProperties = Maps.newHashMap();
+            if (includeInfoDetails) {
+                extraProperties.put(DirectSqlTable.PARAM_METADATA_CONTENT,
+                    TableMetadataParser.toJson(icebergMetastoreTables.getTableOps().current()));
+            }
+            return new IcebergTableWrapper(table, extraProperties);
+        } catch (NoSuchTableException e) {
+            throw new InvalidMetaException(tableName, e);
         } finally {
             final long duration = registry.clock().wallTime() - start;
             log.info("Time taken to getIcebergTable {} is {} ms", tableName, duration);
@@ -181,6 +201,7 @@ public class IcebergTableHandler {
      */
     private final class IcebergMetastoreTables extends BaseMetastoreTables {
         private final String tableLocation;
+        private BaseMetastoreTableOperations tableOperations;
 
         IcebergMetastoreTables(final String tableMetadataLocation) {
             super(conf);
@@ -215,19 +236,20 @@ public class IcebergTableHandler {
         public BaseMetastoreTableOperations newTableOps(final Configuration config,
                                                         final String database,
                                                         final String table) {
-            return newIcebergTableOps(config);
+            return getTableOps();
         }
 
         /**
-         * Creates a new instance of IcebergTableOps for the given table location.
+         * Creates a new instance of IcebergTableOps for the given table location, if not exists.
          *
-         * @param config a Configuration
-         * @return a new MetacatServerOps for the table
+         * @return a MetacatServerOps for the table
          */
-        private IcebergTableOps newIcebergTableOps(final Configuration config) {
-            return new IcebergTableOps(tableLocation);
+        public BaseMetastoreTableOperations getTableOps() {
+            if (tableOperations == null) {
+                tableOperations = new IcebergTableOps(tableLocation);
+            }
+            return tableOperations;
         }
-
     }
 
     /**

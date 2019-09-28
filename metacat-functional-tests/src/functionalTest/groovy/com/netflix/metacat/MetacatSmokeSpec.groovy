@@ -15,18 +15,11 @@
  */
 package com.netflix.metacat
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ObjectNode
-import com.fasterxml.jackson.datatype.guava.GuavaModule
-import com.fasterxml.jackson.module.jaxb.JaxbAnnotationModule
+import com.netflix.metacat.client.Client
 import com.netflix.metacat.client.api.MetacatV1
 import com.netflix.metacat.client.api.MetadataV1
 import com.netflix.metacat.client.api.PartitionV1
 import com.netflix.metacat.client.api.TagV1
-import com.netflix.metacat.client.module.JacksonDecoder
-import com.netflix.metacat.client.module.JacksonEncoder
-import com.netflix.metacat.client.module.MetacatErrorDecoder
-import com.netflix.metacat.common.MetacatRequestContext
 import com.netflix.metacat.common.QualifiedName
 import com.netflix.metacat.common.dto.*
 import com.netflix.metacat.common.exception.MetacatAlreadyExistsException
@@ -40,17 +33,13 @@ import com.netflix.metacat.common.json.MetacatJsonLocator
 import com.netflix.metacat.common.server.connectors.exception.InvalidMetaException
 import com.netflix.metacat.connector.hive.util.PartitionUtil
 import com.netflix.metacat.testdata.provider.PigDataDtoProvider
-import feign.*
-import feign.jaxrs.JAXRSContract
-import feign.slf4j.Slf4jLogger
 import groovy.sql.Sql
+import org.apache.commons.io.FileUtils
 import org.joda.time.Instant
 import spock.lang.Ignore
 import spock.lang.Shared
 import spock.lang.Specification
 import spock.lang.Unroll
-
-import java.util.concurrent.TimeUnit
 
 /**
  * MetacatSmokeSpec.
@@ -70,74 +59,22 @@ class MetacatSmokeSpec extends Specification {
         String url = "http://localhost:${System.properties['metacat_http_port']}"
         assert url, 'Required system property "metacat_url" is not set'
 
-        ObjectMapper mapper = metacatJson.getPrettyObjectMapper().copy()
-            .registerModule(new GuavaModule())
-            .registerModule(new JaxbAnnotationModule())
-        RequestInterceptor interceptor = new RequestInterceptor() {
-            @Override
-            void apply(RequestTemplate template) {
-                template.header(MetacatRequestContext.HEADER_KEY_USER_NAME, "metacat-test")
-                template.header(MetacatRequestContext.HEADER_KEY_CLIENT_APP_NAME, "metacat-test")
-            }
-        }
-        RequestInterceptor hiveContextInterceptor = new RequestInterceptor() {
-            @Override
-            void apply(RequestTemplate template) {
-                template.header(MetacatRequestContext.HEADER_KEY_USER_NAME, "metacat-test")
-                template.header(MetacatRequestContext.HEADER_KEY_CLIENT_APP_NAME, "metacat-test")
-                template.header(MetacatRequestContext.HEADER_KEY_DATA_TYPE_CONTEXT, "hive")
-            }
-        }
-        hiveContextApi = Feign.builder()
-            .logger(new Slf4jLogger())
-            .contract(new JAXRSContract())
-            .encoder(new JacksonEncoder(mapper))
-            .decoder(new JacksonDecoder(mapper))
-            .errorDecoder(new MetacatErrorDecoder(metacatJson))
-            .requestInterceptor(hiveContextInterceptor)
-            .retryer(new Retryer.Default(TimeUnit.MINUTES.toMillis(30), TimeUnit.MINUTES.toMillis(30), 0))
-            .options(new Request.Options((int) TimeUnit.MINUTES.toMillis(10), (int) TimeUnit.MINUTES.toMillis(30)))
-            .target(MetacatV1.class, url)
-        api = Feign.builder()
-            .logger(new Slf4jLogger())
-            .contract(new JAXRSContract())
-            .encoder(new JacksonEncoder(mapper))
-            .decoder(new JacksonDecoder(mapper))
-            .errorDecoder(new MetacatErrorDecoder(metacatJson))
-            .requestInterceptor(interceptor)
-            .retryer(new Retryer.Default(TimeUnit.MINUTES.toMillis(30), TimeUnit.MINUTES.toMillis(30), 0))
-            .options(new Request.Options((int) TimeUnit.MINUTES.toMillis(10), (int) TimeUnit.MINUTES.toMillis(30)))
-            .target(MetacatV1.class, url)
-        partitionApi = Feign.builder()
-            .logger(new Slf4jLogger())
-            .contract(new JAXRSContract())
-            .encoder(new JacksonEncoder(mapper))
-            .decoder(new JacksonDecoder(mapper))
-            .errorDecoder(new MetacatErrorDecoder(metacatJson))
-            .requestInterceptor(interceptor)
-            .retryer(new Retryer.Default(TimeUnit.MINUTES.toMillis(30), TimeUnit.MINUTES.toMillis(30), 0))
-            .options(new Request.Options((int) TimeUnit.MINUTES.toMillis(10), (int) TimeUnit.MINUTES.toMillis(30)))
-            .target(PartitionV1.class, url)
-        tagApi = Feign.builder()
-            .logger(new Slf4jLogger())
-            .contract(new JAXRSContract())
-            .encoder(new JacksonEncoder(mapper))
-            .decoder(new JacksonDecoder(mapper))
-            .errorDecoder(new MetacatErrorDecoder(metacatJson))
-            .requestInterceptor(interceptor)
-            .retryer(new Retryer.Default(TimeUnit.MINUTES.toMillis(30), TimeUnit.MINUTES.toMillis(30), 0))
-            .options(new Request.Options((int) TimeUnit.MINUTES.toMillis(10), (int) TimeUnit.MINUTES.toMillis(30)))
-            .target(TagV1.class, url)
-        metadataApi = Feign.builder()
-            .logger(new Slf4jLogger())
-            .contract(new JAXRSContract())
-            .encoder(new JacksonEncoder(mapper))
-            .decoder(new JacksonDecoder(mapper))
-            .errorDecoder(new MetacatErrorDecoder(metacatJson))
-            .requestInterceptor(interceptor)
-            .retryer(new Retryer.Default(TimeUnit.MINUTES.toMillis(30), TimeUnit.MINUTES.toMillis(30), 0))
-            .options(new Request.Options((int) TimeUnit.MINUTES.toMillis(10), (int) TimeUnit.MINUTES.toMillis(30)))
-            .target(MetadataV1.class, url)
+        def client = Client.builder()
+            .withHost(url)
+            .withUserName('metacat-test')
+            .withClientAppName('metacat-test')
+            .build()
+        def hiveClient = Client.builder()
+            .withHost(url)
+            .withDataTypeContext('hive')
+            .withUserName('metacat-test')
+            .withClientAppName('metacat-test')
+            .build()
+        hiveContextApi = hiveClient.api
+        api = client.api
+        partitionApi = client.partitionApi
+        tagApi = client.tagApi
+        metadataApi = client.metadataApi
     }
 
     @Shared
@@ -207,10 +144,10 @@ class MetacatSmokeSpec extends Specification {
     @Unroll
     def "Test create database for #catalogName/#databaseName"() {
         given:
-        def definitionMetadata = (ObjectNode) metacatJson.emptyObjectNode().set("owner", metacatJson.emptyObjectNode())
+        def definitionMetadata = metacatJson.emptyObjectNode().set("owner", metacatJson.emptyObjectNode())
         expect:
         try {
-            api.createDatabase(catalogName, databaseName, new DatabaseCreateRequestDto(definitionMetadata: definitionMetadata))
+            api.createDatabase(catalogName, databaseName, new DatabaseCreateRequestDto(definitionMetadata: definitionMetadata, uri:uri))
             error == null
         } catch (Exception e) {
             e.class == error
@@ -219,41 +156,43 @@ class MetacatSmokeSpec extends Specification {
             def database = api.getDatabase(catalogName, databaseName, true, true)
             assert database != null && database.name.databaseName == databaseName
             assert database.definitionMetadata != null && database.definitionMetadata == definitionMetadata
+            assert uri == null || uri == database.uri
         }
         cleanup:
         if (!error) {
             api.deleteDatabase(catalogName, databaseName)
         }
         where:
-        catalogName                     | databaseName | error
-        'embedded-hive-metastore'       | 'smoke_db0'  | null
-        'embedded-fast-hive-metastore'  | 'fsmoke_db0' | null
-        'embedded-fast-hive-metastore'  | 'shard1'     | null
-        'hive-metastore'                | 'hsmoke_db0' | null
-        's3-mysql-db'                   | 'smoke_db0'  | null
-        'invalid-catalog'               | 'smoke_db0'  | MetacatNotFoundException.class
+        catalogName                     | databaseName | uri                                                  | error
+        'embedded-hive-metastore'       | 'smoke_db0'  | 'file:/tmp/embedded-hive-metastore/smoke_db00'       | null
+        'embedded-fast-hive-metastore'  | 'fsmoke_db0' | 'file:/tmp/embedded-fast-hive-metastore/fsmoke_db00' | null
+        'embedded-fast-hive-metastore'  | 'shard1'     | null                                                 | null
+        'hive-metastore'                | 'hsmoke_db0' | 'file:/tmp/hive-metastore/hsmoke_db00'               | null
+        's3-mysql-db'                   | 'smoke_db0'  | null                                                 | null
+        'invalid-catalog'               | 'smoke_db0'  | null                                                 | MetacatNotFoundException.class
     }
 
     @Unroll
     def "Test update database for #catalogName/#databaseName"() {
         given:
         def metadata = ['a':'1']
-        def definitionMetadata = (ObjectNode) metacatJson.emptyObjectNode().set("owner", metacatJson.emptyObjectNode())
+        def definitionMetadata = metacatJson.emptyObjectNode().set("owner", metacatJson.emptyObjectNode())
         api.createDatabase(catalogName, databaseName, new DatabaseCreateRequestDto(definitionMetadata: definitionMetadata))
-        api.updateDatabase(catalogName, databaseName, new DatabaseCreateRequestDto(metadata: metadata))
+        api.updateDatabase(catalogName, databaseName, new DatabaseCreateRequestDto(metadata: metadata, uri: uri))
         def database = api.getDatabase(catalogName, databaseName, true, true)
         expect:
         database != null
         database.definitionMetadata == definitionMetadata
         database.metadata == metadata
+        uri == null || uri == database.uri
         cleanup:
         api.deleteDatabase(catalogName, databaseName)
         where:
-        catalogName                     | databaseName
-        'embedded-hive-metastore'       | 'smoke_db0'
-        'embedded-fast-hive-metastore'  | 'fsmoke_db0'
-        'embedded-fast-hive-metastore'  | 'shard1'
-        'hive-metastore'                | 'hsmoke_db0'
+        catalogName                     | databaseName | uri
+        'embedded-hive-metastore'       | 'smoke_db0'  | null
+        'embedded-fast-hive-metastore'  | 'fsmoke_db0' | 'file:/tmp/embedded-fast-hive-metastore/fsmoke_db00'
+        'embedded-fast-hive-metastore'  | 'shard1'     | null
+        'hive-metastore'                | 'hsmoke_db0' | null
     }
 
     @Unroll
@@ -411,9 +350,15 @@ class MetacatSmokeSpec extends Specification {
         def databaseName = 'iceberg_db'
         def tableName = 'iceberg_table'
         def renamedTableName = 'iceberg_table_rename'
+        def icebergManifestFileName = '/metacat-test-cluster/etc-metacat/data/icebergManifest.json'
+        def metadataFileName = '/metacat-test-cluster/etc-metacat/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json'
+        def curWorkingDir = new File("").getAbsolutePath()
+        def icebergManifestFile = new File(curWorkingDir + icebergManifestFileName)
+        def metadataFile = new File(curWorkingDir + metadataFileName)
         def uri = isLocalEnv ? String.format('file:/tmp/%s/%s', databaseName, tableName) : null
         def tableDto = PigDataDtoProvider.getTable(catalogName, databaseName, tableName, 'test', uri)
-        def metadataLocation = String.format('/tmp/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json')
+        def metadataLocation = '/tmp/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json'
+        def icebergMetadataLocation = '/tmp/data/icebergManifest.json'
         def metadata = [table_type: 'ICEBERG', metadata_location: metadataLocation]
         tableDto.setMetadata(metadata)
         when:
@@ -425,19 +370,43 @@ class MetacatSmokeSpec extends Specification {
         when:
         api.deleteTable(catalogName, databaseName, tableName)
         api.createTable(catalogName, databaseName, tableName, tableDto)
-        def metadataLocation1 = String.format('/tmp/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json')
+        def metadataLocation1 = '/tmp/data/00088-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json'
         def metadata1 = [table_type: 'ICEBERG', metadata_location: metadataLocation1, previous_metadata_location: metadataLocation]
+        def updatedUri = tableDto.getDataUri() + 'updated'
         tableDto.getMetadata().putAll(metadata1)
+        tableDto.getSerde().setUri(updatedUri)
         api.updateTable(catalogName, databaseName, tableName, tableDto)
         then:
         noExceptionThrown()
         when:
-        def metadataLocation2 = String.format('/tmp/data/00089-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json')
-        def metadata2 = [table_type: 'ICEBERG', metadata_location: metadataLocation2, previous_metadata_location: metadataLocation1]
-        tableDto.getMetadata().putAll(metadata2)
-        api.updateTable(catalogName, databaseName, tableName, tableDto)
+        FileUtils.moveFile(metadataFile, new File(metadataFile.getAbsolutePath() + '1'))
+        api.getTable(catalogName, databaseName, tableName, true, false, false)
+        then:
+        thrown(MetacatBadRequestException)
+        FileUtils.moveFile(new File(metadataFile.getAbsolutePath() + '1'), metadataFile)
+        when:
+        def updatedTable = api.getTable(catalogName, databaseName, tableName, true, false, false)
         then:
         noExceptionThrown()
+        updatedTable.getMetadata().get('metadata_location') == metadataLocation1
+        updatedTable != null
+        updatedTable.getDataUri() == updatedUri
+        when:
+        def metadataLocation2 = '/tmp/data/00089-5641e8bf-06b8-46b3-a0fc-5c867f5bca58.metadata.json'
+        def metadata2 = [table_type: 'ICEBERG', metadata_location: metadataLocation2, previous_metadata_location: metadataLocation1, 'partition_spec': 'invalid']
+        tableDto.getMetadata().putAll(metadata2)
+        api.updateTable(catalogName, databaseName, tableName, tableDto)
+        updatedTable = api.getTable(catalogName, databaseName, tableName, true, false, false)
+        then:
+        noExceptionThrown()
+        updatedTable.getMetadata().get('metadata_location') == metadataLocation2
+        updatedTable.getMetadata().get('partition_spec') != 'invalid'
+        !updatedTable.getMetadata().containsKey('metadata_content')
+        when:
+        api.updateTable(catalogName, databaseName, tableName, tableDto)
+        def tableWithDetails = api.getTable(catalogName, databaseName, tableName, true, false, false, true)
+        then:
+        tableWithDetails.getMetadata().get('metadata_content') != null
         when:
         api.deleteTable(catalogName, databaseName, renamedTableName)
         api.renameTable(catalogName, databaseName, tableName, renamedTableName)
@@ -456,8 +425,20 @@ class MetacatSmokeSpec extends Specification {
         api.updateTable(catalogName, databaseName, tableName, tableDto)
         then:
         thrown(MetacatPreconditionFailedException)
-        cleanup:
+        when:
+        // Failure to get table after a successful update shouldn't fail
+        def updatedInvalidMetadata = [table_type: 'ICEBERG', metadata_location: icebergMetadataLocation, previous_metadata_location: metadataLocation2]
+        tableDto.getMetadata().putAll(updatedInvalidMetadata)
+        api.updateTable(catalogName, databaseName, tableName, tableDto)
+        then:
+        noExceptionThrown()
+        when:
+        // delete table on an invalid metadata location shouldn't fail
         api.deleteTable(catalogName, databaseName, tableName)
+        then:
+        noExceptionThrown()
+        cleanup:
+        FileUtils.deleteQuietly(icebergManifestFile)
     }
 
     @Unroll
@@ -509,9 +490,25 @@ class MetacatSmokeSpec extends Specification {
         noExceptionThrown()
         tableDTO.metadata.get("metadata_location").equals(metadataLocation)
         tableDTO.getFields().size() == 3
+        tableDTO.getFields().get(0).getComment() != null
         parts.size() == 2
         parts.get(0).dataMetadata != null
         partkeys.size() == 2
+
+        when:
+        partitionApi.getPartitionCount(catalogName, databaseName, tableName)
+        then:
+        thrown(MetacatNotSupportedException)
+
+        when:
+        partitionApi.getPartitionUris(catalogName, databaseName, tableName, null, null, null, null, null)
+        then:
+        noExceptionThrown()
+
+        when:
+        partitionApi.deletePartitions(catalogName, databaseName, tableName, ['field1=true'])
+        then:
+        thrown(MetacatNotSupportedException)
 
         cleanup:
         api.deleteTable(catalogName, databaseName, tableName)
@@ -564,7 +561,7 @@ class MetacatSmokeSpec extends Specification {
 
 
     }
-    
+
     @Unroll
     def "Test delete table #catalogName/#databaseName/#tableName"() {
         given:
@@ -638,7 +635,6 @@ class MetacatSmokeSpec extends Specification {
         'embedded-hive-metastore'       | 'smoke_db2'  | 'part'
         'embedded-fast-hive-metastore'  | 'fsmoke_db2' | 'part'
         'embedded-fast-hive-metastore'  | 'shard'      | 'part'
-        'embedded-fast-hive-metastore'  | 'shard1'     | 'part'
         'hive-metastore'                | 'hsmoke_db2' | 'part'
         's3-mysql-db'                   | 'smoke_db2'  | 'part'
         's3-mysql-db'                   | 'smoke_db2'  | 'PART'
@@ -910,7 +906,7 @@ class MetacatSmokeSpec extends Specification {
                 if (alter) {
                     request.setAlterIfExists(true)
                 }
-                request.setDefinitionMetadata((ObjectNode) metacatJson.emptyObjectNode().set('savePartitions', metacatJson.emptyObjectNode()))
+                request.setDefinitionMetadata(metacatJson.emptyObjectNode().set('savePartitions', metacatJson.emptyObjectNode()))
                 partitionApi.savePartitions(catalogName, databaseName, tableName, request)
                 def savedPartitions = partitionApi.getPartitions(catalogName, databaseName, tableName, partitionName.replace('=', '="') + '"', null, null, null, null, false)
                 createDate = savedPartitions.get(0).getAudit().createdDate

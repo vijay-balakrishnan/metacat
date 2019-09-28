@@ -16,7 +16,6 @@
 package com.netflix.metacat.connector.hive.sql;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
@@ -65,7 +64,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -79,7 +80,11 @@ import java.util.stream.Collectors;
 @Slf4j
 @Transactional("hiveTxManager")
 public class DirectSqlGetPartition {
-    private static final String FIELD_DATE_CREATED = "dateCreated";
+    /**
+     * DateCreated field users can request to sort on.
+     */
+    public static final String FIELD_DATE_CREATED = "dateCreated";
+
     private static final String FIELD_BATCHID = "batchid";
     private static final String AUDIT_DB = "audit";
     private static final Pattern AUDIT_TABLENAME_PATTERN = Pattern.compile(
@@ -93,8 +98,8 @@ public class DirectSqlGetPartition {
     private JdbcTemplate jdbcTemplate;
     private final HiveConnectorFastServiceMetric fastServiceMetric;
     private final String catalogName;
-    private final boolean isAuditProcessingEnabled;
     private final Config config;
+    private final Map<String, String> configuration;
 
     /**
      * Constructor.
@@ -116,8 +121,7 @@ public class DirectSqlGetPartition {
         this.config = connectorContext.getConfig();
         this.jdbcTemplate = jdbcTemplate;
         this.fastServiceMetric = fastServiceMetric;
-        this.isAuditProcessingEnabled = Boolean.valueOf(connectorContext.getConfiguration()
-            .getOrDefault(HiveConfigConstants.ENABLE_AUDIT_PROCESSING, "true"));
+        configuration = connectorContext.getConfiguration();
     }
 
     /**
@@ -521,9 +525,20 @@ public class DirectSqlGetPartition {
                     populateParameters(serdeIds, SQL.SQL_GET_SERDE_PARAMS,
                         "serde_id", serdeParams)));
             }
+            ListenableFuture<List<Void>> future = null;
             try {
-                Futures.transform(Futures.successfulAsList(futures), Functions.constant(null)).get(1, TimeUnit.HOURS);
-            } catch (Exception e) {
+                future = Futures.allAsList(futures);
+                final int getPartitionsDetailsTimeout = Integer.parseInt(configuration
+                    .getOrDefault(HiveConfigConstants.GET_PARTITION_DETAILS_TIMEOUT, "120"));
+                future.get(getPartitionsDetailsTimeout, TimeUnit.SECONDS);
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                try {
+                    if (future != null) {
+                        future.cancel(true);
+                    }
+                } catch (Exception ignored) {
+                    log.warn("Failed cancelling the task that gets the partition details.");
+                }
                 Throwables.propagate(e);
             }
 
@@ -551,6 +566,7 @@ public class DirectSqlGetPartition {
         final boolean forceDisableAudit
     ) {
         List<T> partitions;
+        final QualifiedName tableQName = QualifiedName.ofTable(catalogName, databaseName, tableName);
         try {
             if (!Strings.isNullOrEmpty(filterExpression)) {
                 final PartitionFilterGenerator generator =
@@ -575,9 +591,11 @@ public class DirectSqlGetPartition {
             }
         } catch (Exception e) {
             log.warn("Experiment: Get partitions for for table {} filter {}"
-                    + " failed with error {}", tableName, filterExpression,
+                    + " failed with error {}", tableQName.toString(), filterExpression,
                 e.getMessage());
-            this.fastServiceMetric.getGetHiveTablePartsFailureCounter().increment();
+            registry.counter(registry
+                .createId(HiveMetrics.CounterHiveExperimentGetTablePartitionsFailure.getMetricName())
+                .withTags(tableQName.parts())).increment();
             partitions = getHandlerResults(databaseName, tableName,
                 filterExpression, partitionIds, sql, resultSetExtractor, null,
                 prepareFilterSql(filterExpression), Lists.newArrayList(), sort, pageable, forceDisableAudit);
@@ -858,6 +876,8 @@ public class DirectSqlGetPartition {
                                                        final String tableName,
                                                        final boolean forceDisableAudit) {
         Optional<QualifiedName> sourceTable = Optional.empty();
+        final boolean isAuditProcessingEnabled = Boolean.valueOf(configuration
+            .getOrDefault(HiveConfigConstants.ENABLE_AUDIT_PROCESSING, "true"));
         if (!forceDisableAudit && isAuditProcessingEnabled && databaseName.equals(AUDIT_DB)) {
             final Matcher matcher = AUDIT_TABLENAME_PATTERN.matcher(tableName);
             if (matcher.matches()) {
@@ -918,14 +938,17 @@ public class DirectSqlGetPartition {
             if (partitionIds != null && !partitionIds.isEmpty()) {
                 paramsBuilder.addAll(partitionIds);
             }
+            if (filterSql != null && filterParams != null) {
+                paramsBuilder.addAll(filterParams);
+            }
             paramsBuilder.add(sourceTableName.get().getDatabaseName(), sourceTableName.get().getTableName());
             if (partitionIds != null && !partitionIds.isEmpty()) {
                 paramsBuilder.addAll(partitionIds);
             }
-            paramsBuilder.add(databaseName, tableName);
             if (filterSql != null && filterParams != null) {
                 paramsBuilder.addAll(filterParams);
             }
+            paramsBuilder.add(databaseName, tableName);
             final List<Object> params = paramsBuilder.build();
             final Object[] oParams = new Object[params.size()];
             partitions = (List) jdbcTemplate.query(

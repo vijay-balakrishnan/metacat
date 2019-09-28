@@ -30,6 +30,7 @@ import com.netflix.metacat.connector.hive.client.thrift.MetacatHiveClient
 import com.netflix.metacat.connector.hive.converters.HiveConnectorInfoConverter
 import com.netflix.metacat.connector.hive.converters.HiveTypeConverter
 import com.netflix.metacat.connector.hive.iceberg.IcebergTableHandler
+import com.netflix.metacat.connector.hive.iceberg.IcebergTableWrapper
 import com.netflix.metacat.connector.hive.sql.DirectSqlGetPartition
 import com.netflix.metacat.connector.hive.sql.DirectSqlSavePartition
 import com.netflix.metacat.connector.hive.sql.HiveConnectorFastPartitionService
@@ -48,7 +49,7 @@ class HiveConnectorFastPartitionSpec extends Specification {
     @Shared
     DirectSqlSavePartition directSqlSavePartition = Mock(DirectSqlSavePartition)
     @Shared
-    ConnectorRequestContext connectorContext = new ConnectorRequestContext(1, null)
+    ConnectorRequestContext connectorContext = new ConnectorRequestContext(timestamp:1)
     @Shared
     IcebergTableHandler icebergTableHandler = Mock(IcebergTableHandler)
     @Shared
@@ -62,61 +63,95 @@ class HiveConnectorFastPartitionSpec extends Specification {
             Mock(Warehouse),
             new HiveConnectorInfoConverter(new HiveTypeConverter()),
             directSqlGetPartition,
-            directSqlSavePartition)
+            directSqlSavePartition, icebergTableHandler)
 
     @Shared
     metric1 = Mock(com.netflix.iceberg.ScanSummary.PartitionMetrics)
+
+    @Shared
+    metric2 = Mock(com.netflix.iceberg.ScanSummary.PartitionMetrics)
+
+    @Shared
+    metric3 = Mock(com.netflix.iceberg.ScanSummary.PartitionMetrics)
 
     def setupSpec() {
         conf.icebergEnabled >> true
         metric1.fileCount() >> 1
         metric1.dataTimestampMillis() >> 1234500000
         metric1.recordCount() >> 1
-        hiveConnectorFastPartitionService.icebergTableHandler = icebergTableHandler
-        icebergTableHandler.getIcebergTable(_,_) >> Mock(Table)
+        metric2.fileCount() >> 1
+        metric2.dataTimestampMillis() >> 2734500000
+        metric2.recordCount() >> 1
+        metric3.fileCount() >> 1
+        metric3.dataTimestampMillis() >> null
+        metric3.recordCount() >> 1
+
+        icebergTableHandler.getIcebergTable(_,_,_) >> new IcebergTableWrapper(Mock(Table), [:])
         icebergTableHandler.getIcebergTablePartitionMap(_,_,_) >> ["dateint=20170101/hour=1": metric1,
                                                                    "dateint=20170102/hour=1": metric1,
-                                                                   "dateint=20170103/hour=1": metric1]
+                                                                   "dateint=20170103/hour=1": metric1,
+                                                                   "dateint=20190102/hour=1": metric2,
+                                                                   "dateint=20190103/hour=1": metric3]
     }
 
     @Unroll
-    def "Test for get iceberg table partitionMaps" (){
+    def "Test for get iceberg table partitionMaps" () {
         when:
         def partionInfos = hiveConnectorFastPartitionService.getPartitions(
             connectorContext, QualifiedName.ofTable("testhive", "test1", "icebergtable"),
             partitionListRequest, MetacatDataInfoProvider.getIcebergTableInfo("icebergtable"))
 
         then:
-        partionInfos.collect { [it.getName().getPartitionName(),
-                                it.getAudit().createdDate.toInstant().toEpochMilli(),
-                                it.getAudit().lastModifiedDate.toInstant().toEpochMilli(),
-                                it.getAudit().createdBy]} == results
-        !partionInfos.collect { it.getSerde().uri}.unique().contains(null)
-        partionInfos.collect { it.getSerde().uri}.unique().size() == uniquri
+        partionInfos.collect {
+            [it.getName().getPartitionName(),
+             it.getAudit().createdDate != null ? it.getAudit().createdDate.toInstant().toEpochMilli() : null,
+             it.getAudit().lastModifiedDate != null ? it.getAudit().lastModifiedDate.toInstant().toEpochMilli() : null,
+             it.getAudit().createdBy]
+        } == results
+        !partionInfos.collect { it.getSerde().uri }.unique().contains(null)
+        partionInfos.collect { it.getSerde().uri }.unique().size() == uniquri
         where:
-        partitionListRequest | results | uniquri
-        new PartitionListRequest(null, ["dateint=20170101/hour=1"],false, null,
-            new Sort(), null ) | [["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"]] | 1
+        partitionListRequest                               | results                                                                                                                                                                                                                                                                                                                                       | uniquri
+        new PartitionListRequest(null, ["dateint=20170101/hour=1"], false, null,
+            new Sort(), null)                              | [["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"]]                                                                                                                                                                                                                                                                         | 1
         new PartitionListRequest(null, null, false, null,
-            new Sort(), null) | [["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170102/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170103/hour=1", 1234500000, 1234500000, "metacat_test"]] | 3
+            new Sort("dateCreated", SortOrder.ASC), null)  | [["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170102/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170103/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20190102/hour=1", 2734500000, 2734500000, "metacat_test"], ["dateint=20190103/hour=1", null, null, "metacat_test"]] | 5
         new PartitionListRequest(null, null, false, null,
-            new Sort(null, SortOrder.DESC), null) | [["dateint=20170103/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170102/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"]] | 3
+            new Sort("dateCreated", SortOrder.DESC), null) | [["dateint=20190103/hour=1", null, null, "metacat_test"], ["dateint=20190102/hour=1", 2734500000, 2734500000, "metacat_test"], ["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170102/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170103/hour=1", 1234500000, 1234500000, "metacat_test"]] | 5
+        new PartitionListRequest(null, null, false, null,
+            new Sort(null, SortOrder.DESC), null)          | [["dateint=20190103/hour=1", null, null, "metacat_test"], ["dateint=20190102/hour=1", 2734500000, 2734500000, "metacat_test"], ["dateint=20170103/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170102/hour=1", 1234500000, 1234500000, "metacat_test"], ["dateint=20170101/hour=1", 1234500000, 1234500000, "metacat_test"]]   | 5
     }
 
-
-    def "Test for get iceberg table partitionKeys" (){
+    def "Test for get iceberg table partitions" (){
+        given:
+        def tableName = QualifiedName.ofTable("testhive", "test1", "icebergtable")
+        def tableInfo = MetacatDataInfoProvider.getIcebergTableInfo("icebergtable")
+        def partitionListRequest = new PartitionListRequest();
         when:
-        PartitionListRequest partitionListRequest = new PartitionListRequest();
         partitionListRequest.partitionNames = [
             "dateint=20170101/hour=1"
         ]
-        def partKeys = hiveConnectorFastPartitionService.getPartitionKeys(
-            connectorContext, QualifiedName.ofTable("testhive", "test1", "icebergtable"),
-            partitionListRequest, MetacatDataInfoProvider.getIcebergTableInfo("icebergtable"))
-
+        def partKeys = hiveConnectorFastPartitionService.getPartitionKeys(connectorContext, tableName, partitionListRequest, tableInfo)
         then:
         partKeys== [
             "dateint=20170101/hour=1"
         ]
+
+        when:
+        hiveConnectorFastPartitionService.getPartitionCount(connectorContext, tableName, tableInfo)
+        then:
+        thrown(UnsupportedOperationException)
+
+        when:
+        hiveConnectorFastPartitionService.getPartitionUris(connectorContext, tableName, partitionListRequest, tableInfo)
+        then:
+        thrown(UnsupportedOperationException)
+
+        when:
+        hiveConnectorFastPartitionService.deletePartitions(connectorContext, tableName, ['field1=true'], tableInfo)
+        then:
+        thrown(UnsupportedOperationException)
     }
+
+
 }

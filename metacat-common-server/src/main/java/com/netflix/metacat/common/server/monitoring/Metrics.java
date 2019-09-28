@@ -51,6 +51,12 @@ public enum Metrics {
     CounterRequestCount(Component.server, Type.counter, "request"),
     CounterRequestFailureCount(Component.server, Type.counter, "requestfailure"),
     CounterDeleteMetaData(Component.server, Type.counter, "deleteMetadata"),
+    CounterCatalogTraversal(Component.server, Type.counter, "catalogTraversal"),
+    CounterCatalogTraversalAlreadyRunning(Component.server, Type.counter, "catalogTraversalAlreadyRunning"),
+    CounterCatalogTraversalCatalogReadFailed(Component.server, Type.counter, "catalogTraversalCatalogReadFailed"),
+    CounterCatalogTraversalDatabaseReadFailed(Component.server, Type.counter, "catalogTraversalDatabaseReadFailed"),
+    CounterCatalogTraversalTableReadFailed(Component.server, Type.counter, "catalogTraversalTableReadFailed"),
+    CounterTableUpdateIgnoredException(Component.tableservice, Type.counter, "tableUpdateIgnoredException"),
 
     /**
      * Notifications.
@@ -107,6 +113,7 @@ public enum Metrics {
     TimerRequest(Component.server, Type.timer, "requests"),
     TimerThriftRequest(Component.server, Type.timer, "requests"),
     TimerElasticSearchRefresh(Component.server, Type.timer, "esRefresh"),
+    TimerCatalogTraversal(Component.server, Type.timer, "catalogTraversal"),
     TimerNotificationsPublishDelay(Component.server, Type.timer, "publish.delay"),
     TimerNotificationsBeforePublishDelay(Component.server, Type.timer, "before.publish.delay"),
     TimerSavePartitionMetadata(Component.partionservice, Type.timer, "savePartitionMetadata"),

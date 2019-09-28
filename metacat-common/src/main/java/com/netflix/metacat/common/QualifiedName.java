@@ -39,6 +39,7 @@ import java.util.Objects;
 @Getter
 public final class QualifiedName implements Serializable {
     private static final long serialVersionUID = -7916364073519921672L;
+    private static final String CATALOG_CDE_NAME_PREFIX = "cde_";
     private final String catalogName;
     private final String databaseName;
     private final String partitionName;
@@ -57,10 +58,12 @@ public final class QualifiedName implements Serializable {
         @Nullable final String viewName
     ) {
         this.catalogName = standardizeRequired("catalogName", catalogName);
-        this.databaseName = standardizeOptional(databaseName, true);
-        this.tableName = standardizeOptional(tableName, true);
+        // TODO: Temporary hack to support a certain catalog that has mixed case naming.
+        final boolean forceLowerCase = !catalogName.startsWith(CATALOG_CDE_NAME_PREFIX);
+        this.databaseName = standardizeOptional(databaseName, forceLowerCase);
+        this.tableName = standardizeOptional(tableName, forceLowerCase);
         this.partitionName = standardizeOptional(partitionName, false);
-        this.viewName = standardizeOptional(viewName, true);
+        this.viewName = standardizeOptional(viewName, forceLowerCase);
 
         if (this.databaseName.isEmpty() && (!this.tableName.isEmpty() || !this.partitionName.isEmpty())) {
             throw new IllegalStateException("databaseName is not present but tableName or partitionName are present");
@@ -436,7 +439,7 @@ public final class QualifiedName implements Serializable {
         return !tableName.isEmpty();
     }
 
-    private String standardizeOptional(@Nullable final String value, final boolean forceLowerCase) {
+    private static String standardizeOptional(@Nullable final String value, final boolean forceLowerCase) {
         if (value == null) {
             return "";
         } else {
@@ -448,7 +451,7 @@ public final class QualifiedName implements Serializable {
         }
     }
 
-    private String standardizeRequired(final String name, @Nullable final String value) {
+    private static String standardizeRequired(final String name, @Nullable final String value) {
         if (value == null) {
             throw new IllegalStateException(name + " cannot be null");
         }

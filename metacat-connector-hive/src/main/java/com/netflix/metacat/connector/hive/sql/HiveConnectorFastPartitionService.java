@@ -20,7 +20,6 @@ import com.netflix.iceberg.ScanSummary;
 import com.netflix.metacat.common.QualifiedName;
 import com.netflix.metacat.common.dto.Pageable;
 import com.netflix.metacat.common.dto.Sort;
-import com.netflix.metacat.common.exception.MetacatNotSupportedException;
 import com.netflix.metacat.common.server.connectors.ConnectorContext;
 import com.netflix.metacat.common.server.connectors.ConnectorRequestContext;
 import com.netflix.metacat.common.server.connectors.ConnectorUtils;
@@ -82,6 +81,7 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
      * @param hiveMetacatConverters  hive converter
      * @param directSqlGetPartition  service to get partitions
      * @param directSqlSavePartition service to save partitions
+     * @param icebergTableHandler    iceberg table handler
      */
     public HiveConnectorFastPartitionService(
         final ConnectorContext context,
@@ -89,14 +89,15 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
         final Warehouse warehouse,
         final HiveConnectorInfoConverter hiveMetacatConverters,
         final DirectSqlGetPartition directSqlGetPartition,
-        final DirectSqlSavePartition directSqlSavePartition
+        final DirectSqlSavePartition directSqlSavePartition,
+        final IcebergTableHandler icebergTableHandler
     ) {
         super(context, metacatHiveClient, hiveMetacatConverters);
         this.warehouse = warehouse;
         this.directSqlGetPartition = directSqlGetPartition;
         this.directSqlSavePartition = directSqlSavePartition;
         this.registry = context.getRegistry();
-        this.icebergTableHandler = new IcebergTableHandler(context);
+        this.icebergTableHandler = icebergTableHandler;
     }
 
     /**
@@ -112,7 +113,7 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
         final TableInfo tableInfo
     ) {
         if (context.getConfig().isIcebergEnabled() && HiveTableUtil.isIcebergTable(tableInfo)) {
-            throw new MetacatNotSupportedException("IcebergTable Unsupported Operation!");
+            throw new UnsupportedOperationException("IcebergTable Unsupported Operation!");
         }
         return directSqlGetPartition.getPartitionCount(requestContext, tableName);
     }
@@ -160,7 +161,7 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
         final TableInfo tableInfo
     ) {
         if (context.getConfig().isIcebergEnabled() && HiveTableUtil.isIcebergTable(tableInfo)) {
-            throw new MetacatNotSupportedException("IcebergTable Unsupported Operation!");
+            throw new UnsupportedOperationException("IcebergTable Unsupported Operation!");
         }
         return directSqlGetPartition.getPartitionUris(requestContext, tableName, partitionsRequest);
     }
@@ -333,7 +334,7 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
     ) {
         //TODO: implemented as next step
         if (context.getConfig().isIcebergEnabled() && HiveTableUtil.isIcebergTable(tableInfo)) {
-            throw new MetacatNotSupportedException("IcebergTable Unsupported Operation!");
+            throw new UnsupportedOperationException("IcebergTable Unsupported Operation!");
         }
         //The direct sql based deletion doesn't check if the partition is valid
         if (Boolean.parseBoolean(getContext().getConfiguration()
@@ -357,7 +358,7 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
         final PartitionListRequest partitionsRequest) {
         final QualifiedName tableName = tableInfo.getName();
         final com.netflix.iceberg.Table icebergTable = this.icebergTableHandler.getIcebergTable(tableName,
-            HiveTableUtil.getIcebergTableMetadataLocation(tableInfo));
+            HiveTableUtil.getIcebergTableMetadataLocation(tableInfo), false).getTable();
         final Pageable pageable = partitionsRequest.getPageable();
         final Map<String, ScanSummary.PartitionMetrics> partitionMap
             = icebergTableHandler.getIcebergTablePartitionMap(tableName, partitionsRequest, icebergTable);
@@ -388,9 +389,17 @@ public class HiveConnectorFastPartitionService extends HiveConnectorPartitionSer
             .collect(Collectors.toList());
 
         if (sort != null) {
-            //it can only support sortBy partition Name
-            final Comparator<PartitionInfo> nameComparator = Comparator.comparing(p -> p.getName().toString());
-            ConnectorUtils.sort(filteredPartitionList, sort, nameComparator);
+            if (sort.hasSort() && sort.getSortBy().equalsIgnoreCase(DirectSqlGetPartition.FIELD_DATE_CREATED)) {
+                final Comparator<PartitionInfo> dateCreatedComparator = Comparator.comparing(
+                    p -> p.getAudit() != null ? p.getAudit().getCreatedDate() : null,
+                    Comparator.nullsLast(Date::compareTo));
+
+                ConnectorUtils.sort(filteredPartitionList, sort, dateCreatedComparator);
+            } else {
+                // Sort using the partition name by default
+                final Comparator<PartitionInfo> nameComparator = Comparator.comparing(p -> p.getName().toString());
+                ConnectorUtils.sort(filteredPartitionList, sort, nameComparator);
+            }
         }
         return ConnectorUtils.paginate(filteredPartitionList, pageable);
     }

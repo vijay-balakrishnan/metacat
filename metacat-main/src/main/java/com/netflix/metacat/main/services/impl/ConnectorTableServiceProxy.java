@@ -26,6 +26,7 @@ import com.netflix.metacat.common.server.connectors.model.TableInfo;
 import com.netflix.metacat.common.server.converter.ConverterUtil;
 import com.netflix.metacat.common.server.util.MetacatContextManager;
 import com.netflix.metacat.main.manager.ConnectorManager;
+import com.netflix.metacat.main.services.GetTableServiceParameters;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.cache.annotation.CacheEvict;
@@ -91,13 +92,17 @@ public class ConnectorTableServiceProxy {
      * Returns table if <code>useCache</code> is true and object exists in the cache. If <code>useCache</code> is false
      * or object does not exists in the cache, it is retrieved from the store.
      * @param name table name
+     * @param getTableServiceParameters  get table parameters
      * @param useCache true, if table can be retrieved from cache
      * @return table dto
      */
     @Cacheable(key = "'table.' + #name", condition = "#useCache")
-    public TableInfo get(final QualifiedName name, final boolean useCache) {
+    public TableInfo get(final QualifiedName name,
+                         final GetTableServiceParameters getTableServiceParameters,
+                         final boolean useCache) {
         final MetacatRequestContext metacatRequestContext = MetacatContextManager.getContext();
         final ConnectorRequestContext connectorRequestContext = converterUtil.toConnectorContext(metacatRequestContext);
+        connectorRequestContext.setIncludeMetadata(getTableServiceParameters.isIncludeMetadataFromConnector());
         final ConnectorTableService service = connectorManager.getTableService(name);
         return service.get(connectorRequestContext, name);
     }
@@ -130,20 +135,24 @@ public class ConnectorTableServiceProxy {
      * Calls the connector table service update method.
      * @param name table name
      * @param tableInfo table object
+     * @return true if errors after this should be ignored.
      */
     @CacheEvict(key = "'table.' + #name")
-    public void update(final QualifiedName name, final TableInfo tableInfo) {
+    public boolean update(final QualifiedName name, final TableInfo tableInfo) {
         final MetacatRequestContext metacatRequestContext = MetacatContextManager.getContext();
         final ConnectorTableService service = connectorManager.getTableService(name);
+        boolean result = false;
         try {
             log.info("Updating table {}", name);
             final ConnectorRequestContext connectorRequestContext
                 = converterUtil.toConnectorContext(metacatRequestContext);
             service.update(connectorRequestContext, tableInfo);
+            result = connectorRequestContext.isIgnoreErrorsAfterUpdate();
         } catch (UnsupportedOperationException ignored) {
             //Ignore if the operation is not supported, so that we can at least go ahead and save the user metadata.
             log.debug("Catalog {} does not support the table update operation.", name.getCatalogName());
         }
+        return result;
     }
 
     /**

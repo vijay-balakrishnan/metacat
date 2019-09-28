@@ -21,6 +21,8 @@ import com.netflix.metacat.common.dto.CatalogMappingDto;
 import com.netflix.metacat.common.dto.CreateCatalogDto;
 import com.netflix.metacat.common.exception.MetacatNotFoundException;
 import com.netflix.metacat.common.server.connectors.ConnectorRequestContext;
+import com.netflix.metacat.common.server.connectors.model.CatalogInfo;
+import com.netflix.metacat.common.server.connectors.model.ClusterInfo;
 import com.netflix.metacat.common.server.converter.ConverterUtil;
 import com.netflix.metacat.common.server.events.MetacatEventBus;
 import com.netflix.metacat.common.server.events.MetacatUpdateDatabasePostEvent;
@@ -75,7 +77,10 @@ public class CatalogServiceImpl implements CatalogService {
         final Set<MetacatCatalogConfig> configs = connectorManager.getCatalogConfigs(name.getCatalogName());
         final CatalogDto result = new CatalogDto();
         result.setName(name);
+        // Prepare the connector context
         final ConnectorRequestContext context = converterUtil.toConnectorContext(MetacatContextManager.getContext());
+        context.setIncludeMetadata(getCatalogServiceParameters.isIncludeMetadataFromConnector());
+
         final List<String> databases = Lists.newArrayList();
         configs.forEach(config -> {
             QualifiedName qName = name;
@@ -93,6 +98,16 @@ public class CatalogServiceImpl implements CatalogService {
                         .sorted(String.CASE_INSENSITIVE_ORDER)
                         .collect(Collectors.toList())
                 );
+            }
+            if (config.isProxy()) {
+                final CatalogInfo catalogInfo =
+                    connectorManager.getCatalogService(name).get(context, name);
+                final ClusterInfo clusterInfo = catalogInfo.getClusterInfo();
+                result.setCluster(converterUtil.toClusterDto(clusterInfo));
+                result.setType(clusterInfo.getType());
+                result.setMetadata(catalogInfo.getMetadata());
+            } else {
+                result.setCluster(converterUtil.toClusterDto(config.getClusterInfo()));
             }
         });
         result.setDatabases(databases);
@@ -118,12 +133,14 @@ public class CatalogServiceImpl implements CatalogService {
     @Nonnull
     @Override
     public List<CatalogMappingDto> getCatalogNames() {
-        if (connectorManager.getCatalogs().isEmpty()) {
+        final Set<CatalogInfo> catalogs = connectorManager.getCatalogs();
+        if (catalogs.isEmpty()) {
             throw new MetacatNotFoundException("Unable to locate any catalogs");
         }
 
-        return connectorManager.getCatalogs().stream()
-            .map(catalog -> new CatalogMappingDto(catalog.getCatalogName(), catalog.getType()))
+        return catalogs.stream()
+            .map(catalog -> new CatalogMappingDto(catalog.getName().getCatalogName(),
+                catalog.getClusterInfo().getType(), converterUtil.toClusterDto(catalog.getClusterInfo())))
             .distinct()
             .collect(Collectors.toList());
     }

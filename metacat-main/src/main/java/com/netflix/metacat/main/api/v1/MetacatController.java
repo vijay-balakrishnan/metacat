@@ -187,6 +187,7 @@ public class MetacatController implements MetacatV1 {
                 final DatabaseDto newDto = new DatabaseDto();
                 newDto.setName(name);
                 if (databaseCreateRequestDto != null) {
+                    newDto.setUri(databaseCreateRequestDto.getUri());
                     newDto.setMetadata(databaseCreateRequestDto.getMetadata());
                     newDto.setDefinitionMetadata(databaseCreateRequestDto.getDefinitionMetadata());
                 }
@@ -650,7 +651,10 @@ public class MetacatController implements MetacatV1 {
             defaultValue = "true"
         ) final boolean includeDefinitionMetadata,
         @ApiParam(value = "Whether to include user data metadata information to the response")
-        @RequestParam(name = "includeDataMetadata", defaultValue = "true") final boolean includeDataMetadata
+        @RequestParam(name = "includeDataMetadata", defaultValue = "true") final boolean includeDataMetadata,
+        @ApiParam(value = "Whether to include more info details to the response. This value is considered only if "
+            + "includeInfo is true.")
+        @RequestParam(name = "includeInfoDetails", defaultValue = "false") final boolean includeInfoDetails
     ) {
         final QualifiedName name = this.requestWrapper.qualifyName(
             () -> QualifiedName.ofTable(catalogName, databaseName, tableName)
@@ -666,6 +670,7 @@ public class MetacatController implements MetacatV1 {
                         .includeDefinitionMetadata(includeDefinitionMetadata)
                         .includeDataMetadata(includeDataMetadata)
                         .disableOnReadMetadataIntercetor(false)
+                        .includeMetadataFromConnector(includeInfoDetails)
                         .useCache(true)
                         .build()
                 );
@@ -969,6 +974,7 @@ public class MetacatController implements MetacatV1 {
             () -> {
                 final DatabaseDto newDto = new DatabaseDto();
                 newDto.setName(name);
+                newDto.setUri(databaseUpdateRequestDto.getUri());
                 newDto.setMetadata(databaseUpdateRequestDto.getMetadata());
                 newDto.setDefinitionMetadata(databaseUpdateRequestDto.getDefinitionMetadata());
                 this.databaseService.update(name, newDto);

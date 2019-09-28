@@ -18,8 +18,6 @@
 package com.netflix.metacat.main.services.notifications.sns;
 
 import com.amazonaws.services.sns.AmazonSNS;
-import com.amazonaws.services.sns.model.InvalidParameterException;
-import com.amazonaws.services.sns.model.InvalidParameterValueException;
 import com.amazonaws.services.sns.model.PublishResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.fge.jsonpatch.JsonPatch;
@@ -28,6 +26,7 @@ import com.netflix.metacat.common.QualifiedName;
 import com.netflix.metacat.common.dto.PartitionDto;
 import com.netflix.metacat.common.dto.TableDto;
 import com.netflix.metacat.common.dto.notifications.sns.SNSMessage;
+import com.netflix.metacat.common.dto.notifications.sns.SNSMessageType;
 import com.netflix.metacat.common.dto.notifications.sns.messages.AddPartitionMessage;
 import com.netflix.metacat.common.dto.notifications.sns.messages.CreateTableMessage;
 import com.netflix.metacat.common.dto.notifications.sns.messages.DeletePartitionMessage;
@@ -278,16 +277,36 @@ public class SNSNotificationServiceImpl implements NotificationService {
     @EventListener
     public void notifyOfTableUpdate(final MetacatUpdateTablePostEvent event) {
         log.debug("Received UpdateTableEvent {}", event);
-        final UpdateTableMessage message = this.createUpdateTableMessage(
-            UUID.randomUUID().toString(),
-            event.getRequestContext().getTimestamp(),
-            event.getRequestContext().getId(),
-            event.getName(),
-            event.getOldTable(),
-            event.getCurrentTable(),
-            "Unable to create json patch for update table notification",
-            Metrics.CounterSNSNotificationTableUpdate.getMetricName()
-        );
+        final SNSMessage<?> message;
+        final long timestamp = event.getRequestContext().getTimestamp();
+        final String requestId = event.getRequestContext().getId();
+        final QualifiedName name = event.getName();
+        final TableDto oldTable = event.getOldTable();
+        final TableDto currentTable = event.getCurrentTable();
+        if (event.isLatestCurrentTable()) {
+            message = this.createUpdateTableMessage(
+                UUID.randomUUID().toString(),
+                timestamp,
+                requestId,
+                name,
+                oldTable,
+                currentTable,
+                "Unable to create json patch for update table notification",
+                Metrics.CounterSNSNotificationTableUpdate.getMetricName()
+            );
+        } else {
+            // Send a null payload if we failed to get the latest version
+            // of the current table. This will signal users to callback
+            //
+            message = new SNSMessage<Void>(
+                UUID.randomUUID().toString(),
+                timestamp,
+                requestId,
+                SNSMessageType.TABLE_UPDATE,
+                name.toString(),
+                null);
+        }
+
         this.publishNotification(this.tableTopicArn, this.config.getFallbackSnsTopicTableArn(),
             message, event.getName(),
             "Unable to publish update table notification",
@@ -368,8 +387,8 @@ public class SNSNotificationServiceImpl implements NotificationService {
         PublishResult result = null;
         try {
             result = this.client.publish(arn, this.mapper.writeValueAsString(message));
-        } catch (InvalidParameterException | InvalidParameterValueException exception) {
-            log.error("SNS Publish message exceeded the size threshold", exception);
+        } catch (Exception exception) {
+            log.error("SNS Publish message failed.", exception);
             notificationMetric.counterIncrement(
                 Metrics.CounterSNSNotificationPublishMessageSizeExceeded.getMetricName());
             final SNSMessage<Void> voidMessage = new SNSMessage<>(message.getId(),

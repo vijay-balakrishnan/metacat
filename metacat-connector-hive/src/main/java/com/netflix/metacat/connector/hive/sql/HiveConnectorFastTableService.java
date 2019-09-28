@@ -26,6 +26,7 @@ import com.netflix.metacat.connector.hive.HiveConnectorTableService;
 import com.netflix.metacat.connector.hive.IMetacatHiveClient;
 import com.netflix.metacat.connector.hive.converters.HiveConnectorInfoConverter;
 import com.netflix.metacat.connector.hive.iceberg.IcebergTableHandler;
+import com.netflix.metacat.connector.hive.iceberg.IcebergTableWrapper;
 import com.netflix.metacat.connector.hive.util.HiveTableUtil;
 import com.netflix.spectator.api.Registry;
 import lombok.extern.slf4j.Slf4j;
@@ -55,6 +56,7 @@ public class HiveConnectorFastTableService extends HiveConnectorTableService {
      * @param hiveMetacatConverters        hive converter
      * @param connectorContext             serverContext
      * @param directSqlTable               Table jpa service
+     * @param icebergTableHandler          iceberg table handler
      */
     @Autowired
     public HiveConnectorFastTableService(
@@ -63,12 +65,13 @@ public class HiveConnectorFastTableService extends HiveConnectorTableService {
         final HiveConnectorDatabaseService hiveConnectorDatabaseService,
         final HiveConnectorInfoConverter hiveMetacatConverters,
         final ConnectorContext connectorContext,
-        final DirectSqlTable directSqlTable
+        final DirectSqlTable directSqlTable,
+        final IcebergTableHandler icebergTableHandler
     ) {
         super(catalogName, metacatHiveClient, hiveConnectorDatabaseService, hiveMetacatConverters, connectorContext);
         this.registry = connectorContext.getRegistry();
         this.directSqlTable = directSqlTable;
-        this.icebergTableHandler = new IcebergTableHandler(connectorContext);
+        this.icebergTableHandler = icebergTableHandler;
 
     }
 
@@ -94,9 +97,10 @@ public class HiveConnectorFastTableService extends HiveConnectorTableService {
             return info;
         }
         final String tableLoc = HiveTableUtil.getIcebergTableMetadataLocation(info);
-        final com.netflix.iceberg.Table icebergTable = this.icebergTableHandler.getIcebergTable(name, tableLoc);
+        final IcebergTableWrapper icebergTable =
+            this.icebergTableHandler.getIcebergTable(name, tableLoc, requestContext.isIncludeMetadata());
         return this.hiveMetacatConverters.fromIcebergTableToTableInfo(name,
-            icebergTable, tableLoc, info.getAudit());
+            icebergTable, tableLoc, info);
     }
 
 
@@ -122,6 +126,7 @@ public class HiveConnectorFastTableService extends HiveConnectorTableService {
     @Override
     public void update(final ConnectorRequestContext requestContext, final TableInfo tableInfo) {
         if (HiveTableUtil.isIcebergTable(tableInfo)) {
+            requestContext.setIgnoreErrorsAfterUpdate(true);
             try {
                 directSqlTable.updateIcebergTable(tableInfo);
             } catch (IllegalStateException e) {

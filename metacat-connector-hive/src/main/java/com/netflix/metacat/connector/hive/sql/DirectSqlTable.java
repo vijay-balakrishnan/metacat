@@ -18,6 +18,8 @@
 package com.netflix.metacat.connector.hive.sql;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapDifference;
 import com.google.common.collect.Maps;
@@ -44,6 +46,7 @@ import java.sql.Types;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -68,9 +71,22 @@ public class DirectSqlTable {
      */
     public static final String PARAM_PREVIOUS_METADATA_LOCATION = "previous_metadata_location";
     /**
+     * Defines the current partition spec expression of the iceberg table.
+     */
+    public static final String PARAM_PARTITION_SPEC = "partition_spec";
+    /**
      * Iceberg table type.
      */
     public static final String ICEBERG_TABLE_TYPE = "ICEBERG";
+    /**
+     * Defines the metadata content of the iceberg table.
+     */
+    public static final String PARAM_METADATA_CONTENT = "metadata_content";
+    /**
+     * List of parameter that needs to be excluded when updating an iceberg table.
+     */
+    public static final Set<String> TABLE_EXCLUDED_PARAMS =
+        ImmutableSet.of(PARAM_PARTITION_SPEC, PARAM_METADATA_CONTENT);
 
     private static final String COL_PARAM_KEY = "param_key";
     private static final String COL_PARAM_VALUE = "param_value";
@@ -196,7 +212,7 @@ public class DirectSqlTable {
             throw new InvalidMetaException(tableName, message, null);
         }
         final Long tableId = getTableId(tableName);
-        Map<String, String> existingTableMetadata = Maps.newHashMap();
+        Map<String, String> existingTableMetadata = null;
         log.debug("Lock Iceberg table {}", tableName);
         try {
             existingTableMetadata = jdbcTemplate.query(SQL.TABLE_PARAMS_LOCK,
@@ -214,12 +230,20 @@ public class DirectSqlTable {
             log.warn(message, ex);
             throw new InvalidMetaException(tableName, message, null);
         }
+        if (existingTableMetadata == null) {
+            existingTableMetadata = Maps.newHashMap();
+        }
         validateIcebergUpdate(tableName, existingTableMetadata, newTableMetadata);
         final MapDifference<String, String> diff = Maps.difference(existingTableMetadata, newTableMetadata);
         insertTableParams(tableId, diff.entriesOnlyOnRight());
         final Map<String, String> updateParams = diff.entriesDiffering().entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, s -> s.getValue().rightValue()));
         updateTableParams(tableId, updateParams);
+        //
+        // In addition to updating the table params, the table location in HMS needs to be updated for usage by
+        // external tools, that access HMS directly
+        //
+        updateTableLocation(tableId, tableInfo);
         log.debug("Unlocked Iceberg table {}", tableName);
     }
 
@@ -265,9 +289,18 @@ public class DirectSqlTable {
         }
     }
 
+    private void updateTableLocation(final Long tableId, final TableInfo tableInfo) {
+        final String uri = tableInfo.getSerde() != null ? tableInfo.getSerde().getUri() : null;
+        if (!Strings.isNullOrEmpty(uri)) {
+            jdbcTemplate.update(SQL.UPDATE_SDS_LOCATION, new SqlParameterValue(Types.VARCHAR, uri),
+                new SqlParameterValue(Types.BIGINT, tableId));
+        }
+    }
+
     private void insertTableParams(final Long tableId, final Map<String, String> params) {
         if (!params.isEmpty()) {
             final List<Object[]> paramsList = params.entrySet().stream()
+                .filter(s -> !TABLE_EXCLUDED_PARAMS.contains(s.getKey()))
                 .map(s -> new Object[]{tableId, s.getKey(), s.getValue()}).collect(Collectors.toList());
             jdbcTemplate.batchUpdate(SQL.INSERT_TABLE_PARAMS, paramsList,
                 new int[]{Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
@@ -277,6 +310,7 @@ public class DirectSqlTable {
     private void updateTableParams(final Long tableId, final Map<String, String> params) {
         if (!params.isEmpty()) {
             final List<Object[]> paramsList = params.entrySet().stream()
+                .filter(s -> !TABLE_EXCLUDED_PARAMS.contains(s.getKey()))
                 .map(s -> new Object[]{s.getValue(), tableId, s.getKey()}).collect(Collectors.toList());
             jdbcTemplate.batchUpdate(SQL.UPDATE_TABLE_PARAMS, paramsList,
                 new int[]{Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
@@ -384,6 +418,8 @@ public class DirectSqlTable {
             "update TABLE_PARAMS set param_value=? WHERE tbl_id=? and param_key=?";
         static final String INSERT_TABLE_PARAMS =
             "insert into TABLE_PARAMS(tbl_id,param_key,param_value) values (?,?,?)";
+        static final String UPDATE_SDS_LOCATION =
+            "UPDATE SDS SET LOCATION=? WHERE SD_ID= (SELECT SD_ID FROM TBLS WHERE TBL_ID=?)";
         static final String UPDATE_SDS_CD = "UPDATE SDS SET CD_ID=? WHERE SD_ID=?";
         static final String DELETE_COLUMNS_OLD = "DELETE FROM COLUMNS_OLD WHERE SD_ID=?";
         static final String DELETE_COLUMNS_V2 = "DELETE FROM COLUMNS_V2 WHERE CD_ID=?";
