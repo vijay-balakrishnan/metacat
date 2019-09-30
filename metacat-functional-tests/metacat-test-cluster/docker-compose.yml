@@ -32,6 +32,8 @@ services:
       - '12003'
       - '12004'
     mem_limit: 6g
+    links:
+      - elasticsearch
     volumes:
       - ../build/metacat-war-expanded/ROOT:/usr/local/tomcat/webapps/ROOT
       - ./resources/logging.properties:/usr/local/tomcat/conf/logging.properties
@@ -41,6 +43,7 @@ services:
       - ./etc-metacat/data/:/tmp/data
     environment:
         VIRTUAL_HOST: metacat.docker
+        TARGETS: elasticsearch:9300
         JAVA_OPTS: '-ea
                     -Xms1g
                     -Xmx4g
@@ -66,10 +69,16 @@ services:
                     -Dmetacat.authorization.enabled=true
                     -Dmetacat.authorization.createAcl.createAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
                     -Dmetacat.authorization.deleteAcl.deleteAclStr=embedded-fast-hive-metastore/fsmoke_acl:metacat-prod
-                    -Dmetacat.service.tables.error.list.partitions.threshold=100'
+                    -Dmetacat.service.tables.error.list.partitions.threshold=100
+                    -Dmetacat.metacat.elasticsearch.enabled=true
+                    -Dmetacat.metacat.elasticsearch.cluster.name=elasticsearch
+                    -Dmetacat.metacat.elasticsearch.cluster.nodes=elasticsearch
+                    -Dmetacat.metacat.elasticsearch.cluster.port=9300'
     labels:
       - "com.netflix.metacat.oss.test"
       - "com.netflix.metacat.oss.test.war"
+    networks:
+      - backend
   ##REMOVED cassandra and druid container to reduce the memory demand (orig git hash 43890dd)
   ##TODO: We need to add them back with light images
   hive-metastore-db:
@@ -86,6 +95,8 @@ services:
     labels:
       - "com.netflix.metacat.oss.test"
     mem_limit: 1g
+    networks:
+      - backend
   postgresql:
     image: postgres:9.6
     volumes:
@@ -96,6 +107,8 @@ services:
       - POSTGRES_DB=metacat
     labels:
       - "com.netflix.metacat.oss.test"
+    networks:
+      - backend
   hive-metastore:
     image: danielbwatson/metacat-test-hive-metastore:1.0.0
     depends_on:
@@ -109,6 +122,8 @@ services:
       - "com.netflix.metacat.oss.test"
       - "com.netflix.metacat.oss.test.hive"
     mem_limit: 1g
+    networks:
+      - backend
   storage-barrier:
     image: martin/wait:latest
     depends_on:
@@ -118,6 +133,8 @@ services:
       - TARGETS=postgresql:5432,hive-metastore-db:3306
     labels:
       - "com.netflix.metacat.oss.test"
+    networks:
+      - backend
   service-barrier:
     image: martin/wait:latest
     depends_on:
@@ -126,6 +143,8 @@ services:
       - TARGETS=hive-metastore:9083
     labels:
       - "com.netflix.metacat.oss.test"
+    networks:
+      - backend
   metacat-barrier:
     image: martin/wait:latest
     depends_on:
@@ -135,22 +154,35 @@ services:
       - TIMEOUT=360
     labels:
       - "com.netflix.metacat.oss.test"
+    networks:
+      - backend
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:5.6.0
     container_name: elasticsearch
+    hostname: elasticsearch
     environment:
+      - HOSTNAME=elasticsearch
       - cluster.name=elasticsearch
+      - node.name=elasticsearch
+      - xpack.security.enabled=false
+      - xpack.monitoring.enabled=false
+      - xpack.ml.enabled=false
+      - xpack.graph.enabled=false
+      - xpack.watcher.enabled=false
       - bootstrap.memory_lock=true
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - node.name=node1
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ulimits:
       memlock:
         soft: -1
         hard: -1
     ports:
       - "9200:9200"
+      - "9300:9300"
     healthcheck:
       test: "exit 0"
+    networks:
+      - backend
+
   kibana:
     image: docker.elastic.co/kibana/kibana:5.6.0
     ports:
@@ -159,3 +191,10 @@ services:
     environment:
       SERVER_NAME: kibana.local
       ELASTICSEARCH_URL: http://elasticsearch:9200
+    networks:
+      - backend
+networks:
+  backend:
+    driver: "bridge"
+
+

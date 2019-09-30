@@ -76,6 +76,7 @@ public class ElasticSearchConfig {
             .put("cluster.name", clusterName)
             .put("client.transport.sniff", true) //to dynamically add new hosts and remove old ones
             .put("transport.tcp.connect_timeout", "60s")
+            .put("client.transport.ignore_cluster_name", "true")
             .build();
         final TransportClient client = new PreBuiltTransportClient(settings);
         // Add the transport address if exists
