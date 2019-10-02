@@ -49,10 +49,10 @@ services:
                     -Xmx4g
                     -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000
                     -noverify
-                    -Dnetflix.environment=test
+                    -Dnetflix.environment=prod
                     -Dlogging.path=/var/log/metacat
-                    -Dnetflix.discovery.registration.enabled=false
-                    -Dnetflix.appinfo.validateInstanceId=false
+                    -Dnetflix.discovery.registration.enabled=true
+                    -Dnetflix.appinfo.validateInstanceId=true
                     -Dnetflix.appinfo.vipAddress=
                     -Dnetflix.appinfo.metadata.route53NamePrefix=
                     -Dnetflix.appinfo.metadata.enableRoute53=false
@@ -60,7 +60,7 @@ services:
                     -Dmetacat.metrics.default-registry.enabled=true
                     -Dmetacat.mysqlmetadataservice.enabled=true
                     -Dmetacat.type.converter=com.netflix.metacat.connector.pig.converters.PigTypeConverter
-                    -Dmetacat.definition.metadata.delete.enableForTable=false
+                    -Dmetacat.definition.metadata.delete.enableForTable=true
                     -Dmetacat.definition.metadata.delete.enableDeleteForQualifiedNames=hive-metastore/hsmoke_ddb,hive-metastore/hsmoke_ddb1/test_create_table1,embedded-hive-metastore,embedded-fast-hive-metastore/fsmoke_db1,embedded-fast-hive-metastore/fsmoke_ddb1,embedded-fast-hive-metastore/shard,embedded-fast-hive-metastore/fsmoke_db4,s3-mysql-db,mysql-56-db
                     -Dmetacat.hive.metastore.batchSize=10
                     -Dmetacat.hive.iceberg.enabled=true
